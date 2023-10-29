@@ -1,0 +1,9 @@
+[package]
+name = "rekill"
+version = "0.1.0"
+edition = "2021"
+authors = [ "Esa Turtiainen" ]
+description = "Program that runs a command but kills and restarts it periodically"
+
+[dependencies]
+clap = { version = "4.4.7", features = ["derive"] }
