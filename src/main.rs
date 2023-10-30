@@ -1,4 +1,4 @@
-use clap::Parser;
+use clap::{Parser, command};
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
@@ -56,27 +56,30 @@ fn main() {
         println!("The main thread has started the command thread");
     }
     let _timeout_thread = std::thread::spawn(move || {
-        if verbose > 0 {
+        if verbose > 1 {
             println!("Timeout thread started, timeout {} seconds", time);
         }
         loop {
-            std::thread::sleep(std::time::Duration::from_secs(1));
-            // if verbose > 1 {
-            //     println!("Timeout message sent");
-            // }
+            std::thread::sleep(std::time::Duration::from_secs(time));
+            if verbose > 1 {
+                println!("Timeout message sent");
+            }
+            // Timetout thread sends TimeoutReached
             timeout_to_main_sender
                 .send(Message::TimeoutReached)
                 .expect("Failed to send timeout message");
         }
     });
     let _poll_thread = std::thread::spawn(move || {
+        const POLL_TIME: u64 = 5;
         if verbose > 0 {
-            println!("Poll thread started, poll time {} seconds", 1);
+            println!("Poll thread started, poll time {} seconds", POLL_TIME);
         }
         loop {
-            std::thread::sleep(std::time::Duration::from_secs(1));
+            std::thread::sleep(std::time::Duration::from_secs(POLL_TIME));
+            // Poll thread sends Poll
             poll_to_main_sender
-                .send(Message::PollCommand)
+                .send(Message::Poll)
                 .expect("Failed to send poll command message");
             if verbose > 0 {
                 println!("Polling message sent");
@@ -90,30 +93,36 @@ fn main() {
             .recv()
             .expect("Failed to receive message from thread to main channel")
         {
+            // Thread starts and sends main to thread sender endpoint
             Message::CommandSender(sender) => {
-                // assert!(
-                //     main_to_thread_sender.is_none(),
-                //     "Duplicate command sender message"
-                // );
-                main_to_thread_sender = Some(sender);
+                main_to_thread_sender = Some(sender.clone());
                 if verbose > 1 {
                     println!("Command sender received");
                 }
-                main_to_thread_sender
-                    .unwrap()
-                    .send(Message::StartCommand)
-                    .expect("Failed to send start command message");
+                // Main sends StartCommand message
+                if let Some(t) = &main_to_thread_sender {
+                    t.send(Message::StartCommand)
+                        .expect("Failed to send start command message");
+                } else {
+                    panic!("Command sender received but no channel established");
+                }
             }
+            // Main thread gets a poll message from the poll thread
+            // Poll message is sent to the command thread to check
+            // if the command is still running
             Message::Poll => {
                 if verbose > 1 {
                     println!("Received poll message");
                 }
-                // assert!(main_to_thread_sender.is_some(), "Thread sender is missing");
-                // main_to_thread_sender
-                //     .unwrap()
-                //     .send(Message::PollCommand)
-                //     .expect("Failed to send kill command message");
+                if let Some(t) = &main_to_thread_sender {
+                    t.send(Message::PollCommand)
+                        .expect("Failed to send poll command message");
+                } else {
+                    panic!("Poll message received but no channel established");
+                }
             }
+            // Main thread gets a timeout message from the timeout thread
+            // This tells that the command process should be restarted
             Message::TimeoutReached => {
                 if verbose > 0 {
                     println!("Timeout reached");
@@ -121,19 +130,20 @@ fn main() {
                 if verbose > 0 {
                     println!("Killing command...");
                 }
-                // assert!(main_to_thread_sender.is_some(), "Thread sender is missing");
-                // main_to_thread_sender
-                //     .unwrap()
-                //     .send(Message::KillCommand)
-                //     .expect("Failed to send kill command message");
+                // Main sends KillCommand message
+                if let Some(t) = &main_to_thread_sender {
+                    t.send(Message::KillCommand)
+                        .expect("Failed to send kill command message");
+                } else {
+                    panic!("Timeout message received but no channel established");
+                }
             }
             Message::CommandFinished => {
                 // TODO: status code could be useful here, to be added to protocol
-                // this case should be a separate message:
-                if verbose > 1 {
+                 if verbose > 1 {
                     println!("Command finished message received");
                 }
-                println!("Command finished before timeout, if you want to restart it next time, add --restart");
+                println!("Command finished before restart timeout, if you want to restart it next time, add --restart");
                 if verbose > 0 {
                     println!("Exiting...");
                 }
@@ -151,11 +161,13 @@ fn main() {
                 if verbose > 0 {
                     println!("Restarting...");
                 }
-                // assert!(main_to_thread_sender.is_some(), "Thread sender is missing");
-                // main_to_thread_sender
-                //     .unwrap()
-                //     .send(Message::KillCommand)
-                //     .expect("Failed to send start command message (restart)");
+                // Main sends StartCommand message
+                if let Some(t) = &main_to_thread_sender {
+                    t.send(Message::StartCommand)
+                        .expect("Failed to send start command message");
+                } else {
+                    panic!("Command killed message received but no channel established");
+                }
             }
             _ => panic!("Unexpected thread to main message"),
         } // End of match
@@ -171,10 +183,11 @@ fn create_command_thread(
         // receiver must be declared within the thread
         let (main_to_thread_sender, main_to_thread_receiver) =
             std::sync::mpsc::channel::<Message>();
+        // Thread sends CommandSender
         thread_to_main_sender
             .send(Message::CommandSender(main_to_thread_sender))
             .expect("Failed to send using thread to main sender");
-        let mut command_process: Option<std::process::Child> = std::process::Child::new(None);
+        let mut command_process: Option<std::process::Child> = None;
         loop {
             match main_to_thread_receiver
                 .recv()
@@ -182,57 +195,66 @@ fn create_command_thread(
             {
                 // The command thread's message receiver loop
                 Message::StartCommand => {
-                    // if command_process.is_some() {
-                    //     panic!("Tried to start a new command while another one was running");
-                    // }
-                    command_process = Some(create_command_process(&command));
+                    if let Some(_) = &mut command_process {
+                        panic!("Tried to start a new command while another one was running");
+                    }
+                    command_process = Some(std::process::Command::new(&command[0])
+                        .args(&command[1..])
+                        .spawn()
+                        .expect("Failed to spawn command"));
+
                     if verbose > 0 {
                         println!("The process {:?} started OK", &command);
                     }
                 }
                 Message::PollCommand => {
-                    if command_process.is_none() {
+                    if let Some(p) = &mut command_process {
+                        if verbose > 1 {
+                            println!("Polling received in the command thread");
+                        }
+                        match p.try_wait() {
+                            Ok(Some(status)) => {
+                                // Command finished with status
+                                if verbose > 0 {
+                                    println!("Command {:?} finished OK", &command);
+                                }
+                                command_process = None;
+                                // Thread sends CommandFinished
+                                thread_to_main_sender
+                                    .send(Message::CommandFinished)
+                                    .expect("Failed to send command process finished message");
+                                if verbose > 0 {
+                                    println!(
+                                        "Command process finished with status {}, message sent",
+                                        status
+                                    );
+                                }
+                            }
+                            Ok(None) => {
+                                // Command still running
+                                if verbose > 0 {
+                                    println!("Command still running");
+                                }
+                            }
+                            Err(e) => {
+                                panic!("Failed to poll command process: {}", e);
+                            }
+                        }
+                    } else {
                         panic!("Tried to poll a command process while none was running");
                     }
-                    match command_process.unwrap().try_wait() {
-                        Ok(Some(status)) => {
-                            // Command finished with status
-                            if verbose > 0 {
-                                println!("Command {:?} finished OK", &command);
-                            }
-                            command_process = None;
-                            thread_to_main_sender
-                                .send(Message::CommandFinished)
-                                .expect("Failed to send command process finished message");
-                            if verbose > 0 {
-                                println!(
-                                    "Command process finished with status {}, message sent",
-                                    status
-                                );
-                            }
-                            std::process::exit(0);
-                        }
-                        Ok(None) => {
-                            // Command still running
-                            if verbose > 0 {
-                                println!("Command still running");
-                            }
-                        }
-                        Err(e) => {
-                            panic!("Failed to poll command process: {}", e);
-                        }
-                    }
-                    thread_to_main_sender
-                        .send(Message::CommandFinished)
-                        .expect("Failed to send command process finished message");
                 }
                 Message::KillCommand => {
                     if command_process.is_none() {
                         panic!("Tried to kill a command while none was running");
                     }
-                    // TODO: kill process gracefully
-                    delete_command_process(command_process.unwrap());
-                    command_process = None;
+                     if let Some(mut p) = command_process {
+                        delete_command_process(&mut p);
+                        command_process = None;
+                    } else {
+                        panic!("Tried to kill a command while none was running");
+                    }
+                    // Thread sends CommandKilled
                     thread_to_main_sender
                         .send(Message::CommandKilled)
                         .expect("Failed to send command process finished message");
@@ -250,7 +272,8 @@ fn create_command_process(args: &Vec<String>) -> std::process::Child {
         .expect("Failed to spawn command")
 }
 
-fn delete_command_process(mut command_process: std::process::Child) {
+fn delete_command_process(command_process: &mut std::process::Child) {
+    // TODO: kill process gracefully
     command_process
         .kill()
         .expect("Failed to kill command process");
