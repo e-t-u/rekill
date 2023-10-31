@@ -21,7 +21,9 @@ $ cargo install --git https://github.com/e-t-u/rekill
 ...
 ```
 
-Currently, the program is guaranteed to work on Linux only. Program is written with Rust and it requires the daily toolchain.
+Currently, the program is guaranteed to work on Linux only. It may work in Windows and MacOS, but it is not extensively tested.
+
+Program is written with Rust and it requires the daily toolchain.
 
 ## --restart
 
@@ -35,10 +37,16 @@ The time between restarts can be specified with the `--time` flag. Time is given
 
 Server is currently killed by SIGKILL signal. This means that the process does not get any warning to prepare for termination.
 
-## --verbose
+## --verbose and --quiet
 
-With `--verbose`, the program reports some details of  use the `--verbose` (or `-v`) flag twice to get debug-level messages.
-By default, the program reports restarts and errors.
+By default, the program reports restarts, end of command, and errors. These messages go to stdout.
+
+With --quiet the program does not write anything.
+
+With `--verbose` (or `-v`), the program reports some more details. If you use `--verbose`  flag twice, you get debug-level messages.
+These messages go to stderr.
+
+Combination of `--quiet` and `--verbose` prints only those messages that go to stderr.
 
 ## TODO
 
@@ -51,3 +59,4 @@ By default, the program reports restarts and errors.
 - giving time in minutes as hours
 - making `--verbose` messages more orderly and add `--quiet`
 - downgrade requirement of rust to stable
+- program should catch ctrl-c and kill the server process gracefully
