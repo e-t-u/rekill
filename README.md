@@ -59,8 +59,9 @@ Combination of `--quiet` and `--verbose` prints only those messages that go to s
 - giving time in minutes as hours
 - making `--verbose` messages more orderly and add `--quiet`
 - downgrade requirement of rust to stable
-- program should catch ctrl-c and kill the server process gracefully
+- there should be maximum of restarts in a certain time period
 
 ## BUGS
 
 - ctrl-c causes usually a panic because the threads die in the wrong order
+- In windows, killing the process sometimes works, sometimes it gives error permission denied
