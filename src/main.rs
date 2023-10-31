@@ -56,12 +56,12 @@ fn main() {
     // TODO: Which should go to log instead of the terminal? Needed with future --daemon
     macro_rules! info {
         ($message:expr) => {
-            if verbose >= 0 && !quiet {
+            if !quiet {
                 println!($message);
             }
         };
         ($message:expr, $value:expr) => {
-            if verbose >= 0 && !quiet {
+            if !quiet {
                 println!($message, $value);
             }
         };
@@ -96,7 +96,7 @@ fn main() {
     verbose!("Time: {}", time);
     verbose!("Restart: {}", restart);
     verbose!("Poll time: {}", POLL_TIME);
-    
+
     let (sender, thread_to_main_receiver) = std::sync::mpsc::channel::<Message>();
     let thread_to_main_sender = sender.clone();
     let timeout_to_main_sender = sender.clone();
@@ -140,8 +140,22 @@ fn main() {
         }
     });
 
-    // The main thread's message receiver loop
+    // The channel from main to thread will be established when the command thread starts
+    // and sends the endpoint using message CommandSender
     let mut main_to_thread_sender: Option<std::sync::mpsc::Sender<Message>> = None;
+    
+    // Ctrl-C handler
+    let _ = ctrlc::set_handler(move || {
+        verbose!("Ctrl-C received");
+        debug!("Send KillCommand");
+        // Send KillCommand
+        // TODO: We could send KillCommand message to clean up the command process first
+        // but it would require that we get the channel endpoint
+        // that is difficult
+        std::process::exit(0);
+    });
+
+    // The main thread's message receiver loop
     loop {
         match thread_to_main_receiver
             .recv()
@@ -253,7 +267,7 @@ fn command_thread(
         };
         ($message:expr, $value:expr) => {
             if verbose >= 2 {
-                eprintln!($message, $value);
+                eprintln!(concat!("Command thread: ", $message), $value);
             }
         };
     }
