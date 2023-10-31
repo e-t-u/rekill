@@ -5,16 +5,23 @@ Older server processes often leak memory or other resources. Therefore sometimes
 
 ## Usage
 
+```console
 $ rekill --help
+...
 $ rekill --time=10 --restart leaking-server
+...
 $ rekill -v -v --time=20 sh -c 'echo "hello"; sleep 10; echo "world"'
+...
+```
 
 ## Installation
 
 ```console
 $ cargo install --git https://github.com/e-t-u/rekill
-Currently, the program is guaranteed to work on Linux only. Program is written with Rust.
+...
 ```
+
+Currently, the program is guaranteed to work on Linux only. Program is written with Rust.
 
 ## --restart
 
@@ -40,6 +47,6 @@ By default, the program reports restarts and errors.
 - Mode to watch process and restart (no timeout)
 - Support for script to run before restart to clean files etc.
 - test suite
-- option to daemonize the process, i.e. detach from the terminal
+- option to daemonize the rekill process, i.e. detach from the terminal
 - giving time in minutes as hours
 - making `--verbose` messages more orderly and add `--quiet`
