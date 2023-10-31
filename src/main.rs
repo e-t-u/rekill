@@ -223,7 +223,7 @@ fn create_command_thread(
                                 thread_to_main_sender
                                     .send(Message::CommandFinished)
                                     .expect("Failed to send command process finished message");
-                                if verbose > 0 {
+                                if verbose > 1 {
                                     println!(
                                         "Command process finished with status {}, message sent",
                                         status
@@ -232,7 +232,7 @@ fn create_command_thread(
                             }
                             Ok(None) => {
                                 // Command still running
-                                if verbose > 0 {
+                                if verbose > 1 {
                                     println!("Command still running");
                                 }
                             }
@@ -245,11 +245,9 @@ fn create_command_thread(
                     }
                 }
                 Message::KillCommand => {
-                    if command_process.is_none() {
-                        panic!("Tried to kill a command while none was running");
-                    }
                      if let Some(mut p) = command_process {
-                        delete_command_process(&mut p);
+                        p.kill().expect("Failed to kill command process");
+                        p.wait().expect("Failed to reap command process");
                         command_process = None;
                     } else {
                         panic!("Tried to kill a command while none was running");
@@ -264,18 +262,3 @@ fn create_command_thread(
         } // End of loop
     }) // End of thread
 } // End of fn
-
-fn create_command_process(args: &Vec<String>) -> std::process::Child {
-    std::process::Command::new(&args[0])
-        .args(&args[1..])
-        .spawn()
-        .expect("Failed to spawn command")
-}
-
-fn delete_command_process(command_process: &mut std::process::Child) {
-    // TODO: kill process gracefully
-    command_process
-        .kill()
-        .expect("Failed to kill command process");
-    // TODO: it is possible but a bit theoretical that the command process dies between test and kill
-}
