@@ -210,11 +210,24 @@ fn main() {
             // This is noticed as a result to PollCommand message
             Message::CommandFinished => {
                 debug!("Command finished message received");
-                info!("Command finished before restart timeout, if you want to restart it next time, add --restart");
-                verbose!("Exiting...");
-                // Subthreads are killed when the main thread exits
-                // TODO: return code could be the return code of the command process
-                std::process::exit(0);
+                if restart {
+                    verbose!("Restarting...");
+                    // Main sends StartCommand message
+                    if let Some(t) = &main_to_thread_sender {
+                        t.send(Message::StartCommand)
+                            .expect("Failed to send start command message");
+                    } else {
+                        panic!("Command finished message received but no channel established");
+                    }
+                    debug!("Sent StartCommand message");
+                    continue;
+                } else {
+                    verbose!("Exiting...");
+                    info!("Command finished before restart timeout, if you want to restart it next time, add --restart");
+                    // Subthreads are killed when the main thread exits
+                    // TODO: return code could be the return code of the command process
+                    std::process::exit(0);
+                }
             }
 
             // Main thread get a command running message from the command thread
