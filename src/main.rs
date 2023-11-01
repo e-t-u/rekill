@@ -104,7 +104,9 @@ fn main() {
 
     // Start the command thread that controls the command process
     // Command means here the command that the user wants to run
-    let _command_thread = std::thread::spawn(move || {
+    let _command_thread = std::thread::Builder::new()
+        .name("command".to_string())
+        .spawn(move ||  {
         debug!("The command thread started");
         // Function command_thread is a loop that does not return
         command_thread(command, verbose, thread_to_main_sender);
@@ -113,7 +115,9 @@ fn main() {
 
     // Start the timeout thread
     // When the timeout is reached, the main thread is woken up with message TimeoutReached
-    let _timeout_thread = std::thread::spawn(move || {
+    let _timeout_thread = std::thread::Builder::new()
+        .name("timeout".to_string())
+        .spawn(move || {
         verbose!("Timeout thread started, timeout {} seconds", time);
         loop {
             std::thread::sleep(std::time::Duration::from_secs(time));
@@ -128,7 +132,9 @@ fn main() {
     // Start the poll thread
     // The poll thread wakes up the main thread periodically
     // to check if the command is still running
-    let _poll_thread = std::thread::spawn(move || {
+    let _poll_thread = std::thread::Builder::new()
+        .name("poll".to_string())
+        .spawn(move || {
         verbose!("Poll thread started, poll time {} seconds", POLL_TIME);
         loop {
             std::thread::sleep(std::time::Duration::from_secs(POLL_TIME));
@@ -195,6 +201,18 @@ fn main() {
             // This tells that the command process should be restarted
             Message::TimeoutReached => {
                 verbose!("Timeout reached");
+                debug!("Send PollCommand to verify properly that the command is still running");
+                // Main sends PollCommand message to the command thread
+                // It may be that there is a long time from the last poll
+                // and the command process is already dead
+                // (note that this does not guarantee that the process does not die between poll and kill)
+                if let Some(t) = &main_to_thread_sender {
+                    t.send(Message::PollCommand)
+                        .expect("Failed to send poll command message after timeout");
+                    debug!("Sent PollCommand message")
+                } else {
+                    panic!("Sending PollCommand message received but no channel established");
+                }
                 verbose!("Killing command...");
                 // Main sends KillCommand message
                 if let Some(t) = &main_to_thread_sender {
@@ -203,6 +221,7 @@ fn main() {
                 } else {
                     panic!("Main: Timeout message received but no channel established");
                 }
+
             }
 
             // Main thread gets a command finished message from the command thread
@@ -211,7 +230,7 @@ fn main() {
             Message::CommandFinished => {
                 debug!("Command finished message received");
                 if restart {
-                    verbose!("Restarting...");
+                    info!("Restarting...");
                     // Main sends StartCommand message
                     if let Some(t) = &main_to_thread_sender {
                         t.send(Message::StartCommand)
@@ -223,7 +242,7 @@ fn main() {
                     continue;
                 } else {
                     verbose!("Exiting...");
-                    info!("Command finished before restart timeout, if you want to restart it next time, add --restart");
+                    info!("Command finished before restart timeout, if you want to restart it, add --restart");
                     // Subthreads are killed when the main thread exits
                     // TODO: return code could be the return code of the command process
                     std::process::exit(0);
@@ -350,6 +369,7 @@ fn command_thread(
                 } else {
                     // Command process is not running
                     // This may happen if poll happens between KillCommand and StartCommand
+                    // Or  if poll happens after (or during) KillCommand
                     // We just ignore this
                     debug!("Tried to poll a command process while none was running");
                 }
@@ -370,7 +390,10 @@ fn command_thread(
                     }
                     command_process = None;
                 } else {
-                    panic!("Tried to kill a command while none was running");
+                    // We try to kill process that is already dead
+                    // This may happen due to PollCommand (clean case)
+                    // or the process may have died after the poll
+                    debug!("Tried to kill a command while none was running");
                 }
                 // Thread sends CommandKilled
                 thread_to_main_sender
