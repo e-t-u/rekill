@@ -200,6 +200,7 @@ fn main() {
             // Main thread gets a timeout message from the timeout thread
             // This tells that the command process should be restarted
             Message::TimeoutReached => {
+                info!("Restart");
                 verbose!("Timeout reached");
                 debug!("Send PollCommand to verify properly that the command is still running");
                 // Main sends PollCommand message to the command thread
@@ -224,12 +225,17 @@ fn main() {
             }
 
             // Main thread gets a command finished message from the command thread
+            // This is a respond to PollCommand message
             // This tells that the command process finished before the timeout
-            // This is noticed as a result to PollCommand message
             Message::CommandFinished => {
                 debug!("Command finished message received");
                 if restart {
-                    info!("Restarting...");
+                    // BUG: Here is a bug! The timeout timer must start from 
+                    // the zero again when the command is restarted
+                    // This requires that the timeout thread is either restarted
+                    // or it receives a message to reset the timer
+                    // It requires a whone new channel
+                    info!("Command finished before timeout. Restarting.");
                     // Main sends StartCommand message
                     if let Some(t) = &main_to_thread_sender {
                         t.send(Message::StartCommand)
@@ -282,12 +288,7 @@ fn main() {
             // as a result to KillCommand message
             Message::CommandKilled => {
                 debug!("Command killed message received");
-                if verbose > 0 {
-                    println!("Command killed because of the timeout");
-                }
-                if verbose > 0 {
-                    println!("Restarting...");
-                }
+                verbose!("Command killed because of the timeout");
                 // Main sends StartCommand message
                 if let Some(t) = &main_to_thread_sender {
                     t.send(Message::StartCommand)
