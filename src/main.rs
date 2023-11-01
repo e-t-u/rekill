@@ -1,4 +1,4 @@
-use clap::{Parser, command};
+use clap::{command, Parser};
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
@@ -24,8 +24,8 @@ enum Message {
     // Command thread to main
     CommandSender(std::sync::mpsc::Sender<Message>),
     CommandFinished, // Command died before timeout
-    CommandRunning, // Command still running
-    CommandKilled, // Confirm that the command was killed as requested
+    CommandRunning,  // Command still running
+    CommandKilled,   // Confirm that the command was killed as requested
     // Timeout and poll threads to main
     Poll,
     TimeoutReached,
@@ -34,8 +34,9 @@ enum Message {
     PollCommand,
     KillCommand,
     // Restart is KillCommand + StartCommand
+    // Ctrl-C handler to main
+    CtrlC,
 }
-
 
 fn main() {
     let cli = Cli::parse();
@@ -101,33 +102,33 @@ fn main() {
     let thread_to_main_sender = sender.clone();
     let timeout_to_main_sender = sender.clone();
     let poll_to_main_sender = sender.clone();
+    let ctrlc_to_main_sender = sender.clone();
 
-    // Start the command thread that controls the command process
-    // Command means here the command that the user wants to run
+    // Start the command thread that controls the process that executes the user command
     let _command_thread = std::thread::Builder::new()
         .name("command".to_string())
-        .spawn(move ||  {
-        debug!("The command thread started");
-        // Function command_thread is a loop that does not return
-        command_thread(command, verbose, thread_to_main_sender);
-        std::unreachable!();  
-    });
+        .spawn(move || {
+            debug!("The command thread started");
+            // Function command_thread is a loop that does not return
+            command_thread(command, verbose, thread_to_main_sender);
+            std::unreachable!();
+        });
 
     // Start the timeout thread
     // When the timeout is reached, the main thread is woken up with message TimeoutReached
     let _timeout_thread = std::thread::Builder::new()
         .name("timeout".to_string())
         .spawn(move || {
-        verbose!("Timeout thread started, timeout {} seconds", time);
-        loop {
-            std::thread::sleep(std::time::Duration::from_secs(time));
-            // Timeout thread sends TimeoutReached
-            timeout_to_main_sender
-                .send(Message::TimeoutReached)
-                .expect("Failed to send timeout message");
-            verbose!("TimeoutReached message sent");
-        }
-    });
+            verbose!("Timeout thread started, timeout {} seconds", time);
+            loop {
+                std::thread::sleep(std::time::Duration::from_secs(time));
+                // Timeout thread sends TimeoutReached
+                timeout_to_main_sender
+                    .send(Message::TimeoutReached)
+                    .expect("Failed to send timeout message");
+                verbose!("Timeout thread: TimeoutReached message sent");
+            }
+        });
 
     // Start the poll thread
     // The poll thread wakes up the main thread periodically
@@ -135,30 +136,29 @@ fn main() {
     let _poll_thread = std::thread::Builder::new()
         .name("poll".to_string())
         .spawn(move || {
-        verbose!("Poll thread started, poll time {} seconds", POLL_TIME);
-        loop {
-            std::thread::sleep(std::time::Duration::from_secs(POLL_TIME));
-            // Poll thread sends Poll
-            poll_to_main_sender
-                .send(Message::Poll)
-                .expect("Failed to send poll command message");
-            debug!("Polling message sent");
-        }
-    });
+            verbose!("Poll thread started, poll time {} seconds", POLL_TIME);
+            loop {
+                std::thread::sleep(std::time::Duration::from_secs(POLL_TIME));
+                // Poll thread sends Poll
+                poll_to_main_sender
+                    .send(Message::Poll)
+                    .expect("Failed to send poll command message");
+                debug!("Poll thread: Polling message sent");
+            }
+        });
 
     // The channel from main to thread will be established when the command thread starts
     // and sends the endpoint using message CommandSender
     let mut main_to_thread_sender: Option<std::sync::mpsc::Sender<Message>> = None;
-    
+
     // Ctrl-C handler
     let _ = ctrlc::set_handler(move || {
-        verbose!("Ctrl-C received");
-        debug!("Send KillCommand");
-        // Send KillCommand
-        // TODO: We could send KillCommand message to clean up the command process first
-        // but it would require that we get the channel endpoint
-        // that is difficult
-        std::process::exit(0);
+        info!("...Ctrl-C");
+        debug!("Send CtrlC message to the main thread");
+        // Send CtrlC message to the main thread
+        ctrlc_to_main_sender
+            .send(Message::CtrlC)
+            .expect("Failed to send CtrlC message");
     });
 
     // The main thread's message receiver loop
@@ -221,7 +221,6 @@ fn main() {
                 } else {
                     panic!("Main: Timeout message received but no channel established");
                 }
-
             }
 
             // Main thread gets a command finished message from the command thread
@@ -247,6 +246,25 @@ fn main() {
                     // TODO: return code could be the return code of the command process
                     std::process::exit(0);
                 }
+            }
+
+            // Main thread gets a CtrlC message from the Ctrl-C handler
+            Message::CtrlC => {
+                debug!("Main: CtrlC message received");
+                debug!("Main: Sending KillCommand message to the command thread");
+                // Main sends KillCommand message
+                if let Some(t) = &main_to_thread_sender {
+                    t.send(Message::KillCommand)
+                        .expect("Failed to send kill command message (ctrl-C)");
+                } else {
+                    // Ctrl-C may happen before the command thread channel is established
+                    debug!("Main: CtrlC message received but no channel established");
+                }
+                // Exit must wait for the command to be killed but we should duplicate the kill command
+                // to kill command and die. Therefore, we just simply give the command thread and process
+                // one second to clean up and then main thread exits and kills all subthreads as well
+                std::thread::sleep(std::time::Duration::from_secs(1));
+                std::process::exit(0);
             }
 
             // Main thread get a command running message from the command thread
@@ -304,8 +322,7 @@ fn command_thread(
         };
     }
     // Thread creates a channel to receive messages from the main thread
-    let (main_to_thread_sender, main_to_thread_receiver) =
-        std::sync::mpsc::channel::<Message>();
+    let (main_to_thread_sender, main_to_thread_receiver) = std::sync::mpsc::channel::<Message>();
     // Thread sends its receiving endpoint in the CommandSender message
     thread_to_main_sender
         .send(Message::CommandSender(main_to_thread_sender))
@@ -403,7 +420,6 @@ fn command_thread(
             }
 
             _ => panic!("Unexpected main to thread message"),
-        
         } // End of match
     } // End of loop
 } // End of fn
