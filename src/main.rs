@@ -9,8 +9,8 @@ struct Cli {
     #[arg(short, long, default_value_t = false)]
     quiet: bool,
 
-    #[arg(short, long, value_name = "SECONDS", default_value_t = 5)]
-    time: u64,
+    #[arg(short, long, value_name = "SECONDS")]
+    time: humantime::Duration,
 
     #[arg(short, long, default_value_t = false)]
     restart: bool,
@@ -40,7 +40,7 @@ fn main() {
     let command = cli.command;
     let verbose = cli.verbose;
     let quiet = cli.quiet;
-    let time = cli.time;
+    let time: std::time::Duration = cli.time.into(); // humantime::Duration -> std::time::Duration
     let restart = cli.restart;
     const POLL_TIME: u64 = 500; // milliseconds
 
@@ -91,7 +91,7 @@ fn main() {
 
     verbose!("Command: {:?}", command);
     verbose!("Verbose: {}", verbose);
-    verbose!("Time: {} seconds", time);
+    verbose!("Time: {} seconds", time.as_secs());
     verbose!("Restart: {}", restart);
     verbose!("Poll time: {} milliseconds", POLL_TIME);
 
@@ -124,7 +124,7 @@ fn main() {
     });
 
     // Set initial timeout time
-    let mut timeout = std::time::Instant::now() + std::time::Duration::from_secs(time);
+    let mut timeout = std::time::Instant::now() + time;
 
     // The main thread's message receiver loop
     loop {
@@ -167,7 +167,7 @@ fn main() {
                     }
                     // Start message will be sent by Killed message handler
                     // Set new timeout time
-                    timeout = std::time::Instant::now() + std::time::Duration::from_secs(time);
+                    timeout = std::time::Instant::now() + time;
                 } else {
                     // Timeout not reached
                     // Main sends Poll message to the command thread to check if the command is alive
