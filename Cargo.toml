@@ -1,11 +1,11 @@
 [package]
 name = "rekill"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 authors = [ "Esa Turtiainen" ]
 description = "Program that runs a command but kills and restarts it periodically"
 
 [dependencies]
-clap = { version = "4.4.7", features = ["derive"] }
+clap = { version = "4.4.7", features = ["derive", "cargo"] }
 ctrlc = "3.1.5"
 humantime = "2.1.0"
